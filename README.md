@@ -32,7 +32,6 @@ Creates metrices and alarms for various security events for the AWS account
              AWS Secret Access Key: Secret Access Key of any admin user of the account in consideration
              Default region name: Programmatic region name where you want to deploy the resources (eg: us-east-1)
              Default output format: json  
-       - Run this script in any bash shell (linux command prompt)
 
 # .EXAMPLE
      Command to execute : aws cloudformation deploy --template-file create-metric-alarms.yml --stack-name <stack-name> --parameter-overrides env=<environment-prefix> region=<region-name> awsaccountid=<12-digit AWS account Id> emailid=<email-id where you wish to receive notifications> --capabilities CAPABILITY_NAMED_IAM
