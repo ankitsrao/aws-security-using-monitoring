@@ -1,0 +1,1012 @@
+Parameters:
+    env:
+        Description: Environment prefix
+        Type: String
+        Default: dev
+    region:
+        Description: Region where the resources are to be deployed
+        Type: String
+        Default: us-east-1
+    awsaccountid:
+        Description: AWS Account ID
+        Type: String
+    emailid:
+        Description: Email ID where the sns notifications are to be sent
+        Type: String
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+        BucketName:
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-'
+            - !Ref awsaccountid
+        BucketEncryption:
+            ServerSideEncryptionConfiguration:
+                - ServerSideEncryptionByDefault:
+                    SSEAlgorithm: AES256
+        LifecycleConfiguration:
+            Rules:
+            - Id: Delete-ct-logs
+              Prefix: cw-ctlogs/
+              Status: Enabled
+              ExpirationInDays: 1
+              NoncurrentVersionExpirationInDays: 1
+        Tags: 
+          -
+            Key: "ServiceName"
+            Value: "cloudtrail-log-bucket"
+          -
+            Key: "Description"
+            Value: "Monitoring and alarm resource. Stores cloudtrail logs"
+  CTBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties: 
+      Bucket:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-'
+          - !Ref awsaccountid
+      PolicyDocument:
+        Statement:
+          - Sid: CTBucketPolicy1
+            Action:
+              - "s3:GetBucketAcl"
+            Effect: "Allow"
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+            Resource:
+              Fn::Join:
+              - ""
+              - - 'arn:aws:s3:::'
+                - !Ref env
+                - '-'
+                - !Ref awsaccountid
+          - Sid: CTBucketPolicy2
+            Action:
+              - "s3:PutObject"
+            Effect: "Allow"
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+            Resource:
+              Fn::Join:
+              - ""
+              - - 'arn:aws:s3:::'
+                - !Ref env
+                - '-'
+                - !Ref awsaccountid
+                - '/cw-ctlogs/*'
+            Condition:
+              StringLike: 
+                s3:x-amz-acl: 
+                  - "bucket-owner-full-control"
+  CTCWLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+  CTCloudwatchRole: 
+    Type: AWS::IAM::Role
+    DependsOn: CTCWLogGroup 
+    Properties:
+      RoleName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-CT-CloudwatchRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ct-cloudwatch-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Sid: CTCWPolicy1
+              Effect: Allow
+              Action:
+              - "logs:CreateLogStream"
+              Resource: 
+                Fn::Join:
+                - ""
+                - - 'arn:aws:logs:'
+                  - !Ref region
+                  - ':'
+                  - !Ref awsaccountid
+                  - ':log-group:'
+                  - !Ref env
+                  - "-monitoring-log-group:*"
+            - Sid: CTCWPolicy2
+              Effect: Allow
+              Action:
+              - "logs:PutLogEvents"
+              Resource: 
+                Fn::Join:
+                - ""
+                - - 'arn:aws:logs:'
+                  - !Ref region
+                  - ':'
+                  - !Ref awsaccountid
+                  - ':log-group:'
+                  - !Ref env
+                  - "-monitoring-log-group:*"
+  MonitoringCloudTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: CTCloudwatchRole 
+    Properties: 
+      CloudWatchLogsLogGroupArn:
+        Fn::Join:
+        - ""
+        - - 'arn:aws:logs:'
+          - !Ref region
+          - ':'
+          - !Ref awsaccountid
+          - ':log-group:'
+          - !Ref env
+          - '-monitoring-log-group:*'
+      CloudWatchLogsRoleArn:
+        Fn::Join:
+        - ""
+        - - 'arn:aws:iam::'
+          - !Ref awsaccountid
+          - ':'
+          - 'role/'
+          - !Ref env
+          - '-CT-CloudwatchRole'  
+      IncludeGlobalServiceEvents: true
+      IsLogging: true
+      IsMultiRegionTrail: true
+      S3BucketName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-'
+          - !Ref awsaccountid
+      S3KeyPrefix: cw-ctlogs
+      TrailName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-trail'
+      Tags: 
+        -
+          Key: "ServiceName"
+          Value: "monitoring-cloudtrail"
+        -
+          Key: "Description"
+          Value: "Monitoring and alarm resource that provides API logs"
+  AlarmSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-topic'
+  SNSSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: AlarmSNSTopic 
+    Properties:
+      Endpoint: !Ref emailid
+      Protocol: email
+      TopicArn: 
+        Fn::Join:
+        - ""
+        - - 'arn:aws:sns:'
+          - !Ref region
+          - ':'
+          - !Ref awsaccountid
+          - ':'
+          - !Ref env
+          - '-monitoring-topic'
+
+  UnauthorizedAPIMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.errorCode ="*UnauthorizedOperation") || ($.errorCode ="AccessDenied*") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-UnauthorizedAPICalls'
+        MetricValue: '1'
+  UnauthorizedAPICallsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-UnauthorizedAPICalls'
+      AlarmDescription: Alarm for Unauthorized API calls
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-UnauthorizedAPICalls'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  SGChangesMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventName="AuthorizeSecurityGroupIngress") || ($.eventName="AuthorizeSecurityGroupEgress") || ($.eventName="RevokeSecurityGroupIngress") || ($.eventName="RevokeSecurityGroupEgress") || ($.eventName="CreateSecurityGroup") || ($.eventName="DeleteSecurityGroup") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-SecurityGroupChanges'
+        MetricValue: '1'
+  SGChangesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-SecurityGroupChanges'
+      AlarmDescription: Alarm for security group changes
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-SecurityGroupChanges'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  NACLChangesMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventName="CreateNetworkAcl") || ($.eventName="CreateNetworkAclEntry") || ($.eventName="DeleteNetworkAcl") || ($.eventName="DeleteNetworkAclEntry") || ($.eventName="ReplaceNetworkAclEntry") || ($.eventName="ReplaceNetworkAclAssociation") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-NACLChanges'
+        MetricValue: '1'
+  NACLChangesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-NACLChanges'
+      AlarmDescription: Alarm for changes to NACL
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-NACLChanges'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  NetworkGatewayMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventName="CreateCustomerGateway") || ($.eventName="DeleteCustomerGateway") || ($.eventName="AttachInternetGateway") || ($.eventName="CreateInternetGateway") || ($.eventName="DeleteInternetGateway") || ($.eventName="DetachInternetGateway") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-NetworkGatewayChanges'
+        MetricValue: '1'
+  NetworkGatewayAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-NetworkGatewayChanges'
+      AlarmDescription: Alarm for changes to Network Gateway
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-NetworkGatewayChanges'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  RouteTableChangesMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventName="CreateRoute") || ($.eventName="CreateRouteTable") || ($.eventName="ReplaceRoute") || ($.eventName="ReplaceRouteTableAssociation") || ($.eventName="DeleteRouteTable") || ($.eventName="DeleteRoute") || ($.eventName="DisassociateRouteTable") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-RouteTableChanges'
+        MetricValue: '1'
+  RouteTableChangesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-RouteTableChanges'
+      AlarmDescription: Alarm for changes to Route Table
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-RouteTableChanges'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  VPCChangesMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventName="CreateVpc") || ($.eventName="DeleteVpc") || ($.eventName="ModifyVpcAttribute") || ($.eventName="AcceptVpcPeeringConnection") || ($.eventName="CreateVpcPeeringConnection") || ($.eventName="DeleteVpcPeeringConnection") || ($.eventName="RejectVpcPeeringConnection") || ($.eventName="AttachClassicLinkVpc") || ($.eventName="DetachClassicLinkVpc") || ($.eventName="DisableVpcClassicLink") || ($.eventName="EnableVpcClassicLink") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-VPCChanges'
+        MetricValue: '1'
+  VPCChangesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-VPCChanges'
+      AlarmDescription: Alarm for changes to VPC
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-VPCChanges'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  ConsoleSignInMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventName ="ConsoleLogin") && ($.additionalEventData.MFAUsed !="Yes") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-ConsoleSignIn'
+        MetricValue: '1'
+  ConsoleSignInAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-ConsoleSignIn'
+      AlarmDescription: Alarm for Management Console sign-in without MFA
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-ConsoleSignIn'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  RootUsageMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.userIdentity.type ="Root") && $.userIdentity.invokedBy NOT EXISTS && ($.eventType !="AwsServiceEvent") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-RootUsage'
+        MetricValue: '1'
+  RootUsageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-RootUsage'
+      AlarmDescription: Alarm for Root Account usage
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-RootUsage'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  IAMPolicyChangesMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventName="DeleteGroupPolicy") || ($.eventName="DeleteRolePolicy") || ($.eventName="DeleteUserPolicy") || ($.eventName="PutGroupPolicy") || ($.eventName="PutRolePolicy") || ($.eventName="PutUserPolicy") || ($.eventName="CreatePolicy") || ($.eventName="DeletePolicy") || ($.eventName="CreatePolicyVersion") || ($.eventName="DeletePolicyVersion") || ($.eventName="AttachRolePolicy") || ($.eventName="DetachRolePolicy") || ($.eventName="AttachUserPolicy") || ($.eventName="DetachUserPolicy") || ($.eventName="AttachGroupPolicy") || ($.eventName="DetachGroupPolicy") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-IAMPolicyChanges'
+        MetricValue: '1'
+  IAMPolicyChangesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-IAMPolicyChanges'
+      AlarmDescription: Alarm for changes to IAM Policies
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-IAMPolicyChanges'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  CloudTrailConfigChangesMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventName="CreateTrail") || ($.eventName="UpdateTrail") || ($.eventName="DeleteTrail") || ($.eventName="StartLogging") || ($.eventName="StopLogging") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-CloudTrailConfigChanges'
+        MetricValue: '1'
+  CloudTrailConfigChangesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-CloudTrailConfigChanges'
+      AlarmDescription: Alarm for changes to CloudTrail configuration changes
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-CloudTrailConfigChanges'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  ConsoleAuthFailureMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventName="ConsoleLogin") && ($.errorMessage ="Failed authentication") }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-ConsoleAuthFailure'
+        MetricValue: '1'
+  ConsoleAuthFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-ConsoleAuthFailure'
+      AlarmDescription: Alarm for AWS Management Console authentication failures
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-ConsoleAuthFailure'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  CMKDeletionMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventSource="kms.amazonaws.com") && (($.eventName="DisableKey") || ($.eventName="ScheduleKeyDeletion")) }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-CMKDeletion'
+        MetricValue: '1'
+  CMKDeletionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-CMKDeletion'
+      AlarmDescription: Alarm for disabling or scheduled deletion of customer created CMKs
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-CMKDeletion'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  S3PolicyChangesMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventSource="s3.amazonaws.com") && (($.eventName="PutBucketAcl") || ($.eventName="PutBucketPolicy") || ($.eventName="PutBucketCors") || ($.eventName="PutBucketLifecycle") || ($.eventName="PutBucketReplication") || ($.eventName="DeleteBucketPolicy") || ($.eventName="DeleteBucketCors") || ($.eventName="DeleteBucketLifecycle") || ($.eventName="DeleteBucketReplication")) }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-S3PolicyChanges'
+        MetricValue: '1'
+  S3PolicyChangesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-S3PolicyChanges'
+      AlarmDescription: Alarm for S3 bucket policy changes
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-S3PolicyChanges'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
+
+  AWSConfigChangesMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: AlarmSNSTopic
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-monitoring-log-group'
+      FilterPattern: '{ ($.eventSource="config.amazonaws.com") && (($.eventName="StopConfigurationRecorder") || ($.eventName="DeleteDeliveryChannel") || ($.eventName="PutDeliveryChannel") || ($.eventName="PutConfigurationRecorder")) }'
+      MetricTransformations:
+      - MetricNamespace: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-MonitoringAlarmMetrics'
+        MetricName: 
+          Fn::Join:
+          - ""
+          - - !Ref env
+            - '-AWSConfigChanges'
+        MetricValue: '1'
+  AWSConfigChangesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-AWSConfigChanges'
+      AlarmDescription: Alarm for S3 bucket policy changes
+      AlarmActions:
+        - Fn::Join:
+          - ""
+          - - 'arn:aws:sns:'
+            - !Ref region
+            - ':'
+            - !Ref awsaccountid
+            - ':'
+            - !Ref env
+            - '-monitoring-topic'
+      MetricName: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-AWSConfigChanges'
+      Namespace: 
+        Fn::Join:
+        - ""
+        - - !Ref env
+          - '-MonitoringAlarmMetrics'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: '1'
+      Period: '300'
+      Statistic: Sum
+      Threshold: '1'
