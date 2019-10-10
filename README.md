@@ -5,20 +5,20 @@ Creates metrices and alarms for various security events for the AWS account
      Script to create metrices and alarms for various events in the AWS Account.
 # .DESCRIPTION
      This script will create a CloudTrail, Cloudwatchlog group, S3 bucket, Event Metrices, SNS Topic and subscription and alarms to remediate the below list of policies.
-     Ensure a log metric filter and alarm exist for unauthorized API calls
-     Ensure a log metric filter and alarm exist for Management Console sign-in without MFA
-     Ensure a log metric filter and alarm exist for usage of 'root' account
-     Ensure a log metric filter and alarm exist for IAM policy changes
-     Ensure a log metric filter and alarm exist for CloudTrail configuration changes
-     Ensure a log metric filter and alarm exist for AWS Management Console authentication failures
-     Ensure a log metric filter and alarm exist for disabling or scheduled deletion of customer created CMKs
-     Ensure a log metric filter and alarm exist for S3 bucket policy changes
-     Ensure a log metric filter and alarm exist for AWS Config configuration changes
-     Ensure a log metric filter and alarm exist for security group changes
-     Ensure a log metric filter and alarm exist for changes to Network Access Control Lists (NACL)
-     Ensure a log metric filter and alarm exist for changes to network gateways
-     Ensure a log metric filter and alarm exist for route table changes
-     Ensure a log metric filter and alarm exist for VPC changes
+     1) Ensure a log metric filter and alarm exist for unauthorized API calls
+     2) Ensure a log metric filter and alarm exist for Management Console sign-in without MFA
+     3) Ensure a log metric filter and alarm exist for usage of 'root' account
+     4) Ensure a log metric filter and alarm exist for IAM policy changes
+     5) Ensure a log metric filter and alarm exist for CloudTrail configuration changes
+     6) Ensure a log metric filter and alarm exist for AWS Management Console authentication failures
+     7) Ensure a log metric filter and alarm exist for disabling or scheduled deletion of customer created CMKs
+     8) Ensure a log metric filter and alarm exist for S3 bucket policy changes
+     9) Ensure a log metric filter and alarm exist for AWS Config configuration changes
+     10) Ensure a log metric filter and alarm exist for security group changes
+     11) Ensure a log metric filter and alarm exist for changes to Network Access Control Lists (NACL)
+     12) Ensure a log metric filter and alarm exist for changes to network gateways
+     13) Ensure a log metric filter and alarm exist for route table changes
+     14) Ensure a log metric filter and alarm exist for VPC changes
 # .NOTES
      Version: 1.0
 
