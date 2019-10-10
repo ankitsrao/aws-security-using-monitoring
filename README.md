@@ -35,7 +35,7 @@ Creates metrices and alarms for various security events for the AWS account
        - Run this script in any bash shell (linux command prompt)
 
 # .EXAMPLE
-     Command to execute : aws cloudformation deploy --template-file remediate-monitoring-policies.yml --stack-name <stack-name> --parameter-overrides env=<environment-prefix> region=<region-name> awsaccountid=<12-digit AWS account Id> emailid=<email-id where you wish to receive notifications> --capabilities CAPABILITY_NAMED_IAM
+     Command to execute : aws cloudformation deploy --template-file create-metric-alarms.yml --stack-name <stack-name> --parameter-overrides env=<environment-prefix> region=<region-name> awsaccountid=<12-digit AWS account Id> emailid=<email-id where you wish to receive notifications> --capabilities CAPABILITY_NAMED_IAM
 
 # .INPUTS
      stack-name: Name of the stack that will be created
