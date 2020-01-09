@@ -1,4 +1,4 @@
-# Implementing securtiy in AWS accounts using monitoring and alarming tools
+# Implementing security in AWS accounts using monitoring and alarming tools
 Creates metrices and alarms for various security events for the AWS account
 
 # SYNOPSIS
